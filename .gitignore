@@ -1,0 +1,12 @@
+*.o
+*.so
+*.a
+build/
+
+*.bin
+*.safetensors
+
+.vscode/
+
+.DS_Store
+Thumbs.db
