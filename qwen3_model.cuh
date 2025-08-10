@@ -41,7 +41,7 @@ typedef struct {
         floatX* attn_norm; // (hidden_size)
 
         floatX* router; // (hidden_size, num_experts)
-        floatX* experts; // (num_experts, ?)
+        floatX* experts; // (num_experts, expert_weight_arrays)
         floatX* ffn_norm; // (hidden_size)
     } layers[48]; // 48 layers
 
