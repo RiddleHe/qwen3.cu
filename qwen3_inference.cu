@@ -57,10 +57,76 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
     printf("Using device %s\n", prop.name);
 
-    float gpu_memory_gb = prop.totalGlobalmem / (1024.0 * 1024.0 * 1024.0); // GB
+    float gpu_memory_gb = prop.totalGlobalMem / (1024.0 * 1024.0 * 1024.0); // GB
     printf("GPU memory: %.1f GB\n", gpu_memory_gb);
 
     // Load config
     Qwen3Config config;
-    // TODO: finish the rest
+    qwen3_init_30b_config(&config);
+    qwen3_print_config(&config);
+
+    // TODO: load weights
+    // TODO: allocate memory
+    // TODO: set up moe router
+    // TODO: running inference
+    // TODO: generate text
+
+    printf("\n=== Inference Complete ===\n");
+    return 0;
+}
+
+void qwen3_init_30b_config(Qwen3Config* config) {
+    config->vocab_size = 151936;
+    config->hidden_size = 2048;
+    config->intermediate_size = 6144;
+    config->moe_intermediate_size = 768;
+    config->num_hidden_layers = 48;
+    config->num_attention_heads = 32;
+    config->num_key_value_heads = 4;
+    config->head_dim = 64;
+    config->num_experts = 128;
+    config->num_experts_per_tok = 8;
+    config->router_aux_loss_coef = 0.001f;
+    config->max_seq_len = 262144;
+    config->max_batch_size = 1;
+}
+
+void qwen3_print_config(Qwen3Config* config) {
+    printf("\n=== Qwen3-30B-A3B-Thinking-2507 Config ===\n");
+    printf("Vocabuarly size: %d\n", config->vocab_size);
+    printf("Hidden size: %d\n", config->hidden_size);
+    printf("Intermediate size: %d\n", config->intermediate_size);
+    printf("Num hidden layers: %d\n", config->num_hidden_layers);
+    printf("Num attention heads: %d\n", config->num_attention_heads);
+    printf("Num experts: %d\n", config->num_experts);
+    printf("Num experts per token: %d\n", config->num_experts_per_tok);
+    printf("Max seq len: %d\n", config->max_seq_len);
+    printf("\n");
+}
+
+void qwen3_forward(
+    Qwen3Config* config,
+    Qwen3Weights* weights,
+    int* input_tokens,  // (batch_size, seq_len)
+    floatX* output_logits, // (batch_size, seq_len, vocab_size)
+    int batch_size,
+    int seq_len
+) {
+    // TODO: implement forward pass
+}
+
+void qwen3_free_weights(Qwen3Weights* weights) {
+    // TODO: implement
+}
+
+void moe_forward(
+    Qwen3Config* config,
+    floatX* input, 
+    floatX* router_weights, 
+    ExpertWeights* experts, 
+    floatX* output, 
+    int batch_size,
+    int seq_len
+) {
+    // TODO: implement
 }

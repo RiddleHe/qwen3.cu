@@ -10,7 +10,7 @@ This models after Qwen3-30B-A3B-Thinking-2507
 #ifdef ENABLE_BF16
 typedef __nv_bfloat16 floatX;
 #else
-typedef float floatX
+typedef float floatX;
 #endif
 
 typedef struct {
@@ -67,6 +67,5 @@ void qwen3_forward(
 void qwen3_init_30b_config(Qwen3Config* config);
 void qwen3_print_config(Qwen3Config* config);
 void qwen3_free_weights(Qwen3Weights* weights);
-size_t qwen3_calculate_memory_usage(Qwen3Config* config);
 
 #endif
