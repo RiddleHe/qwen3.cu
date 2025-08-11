@@ -30,6 +30,22 @@ void print_usage(const char* program_name) {
 int main(int argc, char* argv[]) {
     printf("=== Qwen3-30B-A3B-Thinking-2507 in CUDA ===\n");
 
+    // Test
+    if (argc == 2 && strcmp(argv[1], "test") == 0) {
+        printf("=== Test ===\n");
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties(&prop, 0);
+        printf("GPU: %s (%.1f GB)\n", prop.name, prop.totalGlobalMem / (1024.0 * 1024.0 * 1024.0));
+
+        void* test_ptr;
+        if (cudaMalloc(&test_ptr, 1024*1024) == cudaSuccess) {
+            printf("CUDA allocation works\n");
+            cudaFree(test_ptr);
+        }
+
+        return 0;
+    }
+
     if (argc != 3) {
         print_usage(argv[0]);
         return 1;
