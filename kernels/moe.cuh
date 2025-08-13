@@ -156,9 +156,11 @@ __global__ void moe_expert_gated_proj_kernel(
 
     int token_idx = token_expert_pairs[pair_idx * 2];
     int expert_idx = token_expert_pairs[pair_idx * 2 + 1]; // global expert idx for this pair (0-127)
-    int local_expert_idx = pair_idx % num_experts_per_tok; // local expert idx for this pair (0-7)
+    int local_expert_idx = pair_idx % num_experts_per_tok; // local expert idx for this pair (0-7), maintain order as they are sorted by topk
 
     // for each token-expert pair, transform (hidden_size,) -> (moe_intermediate_size,)
+    // each thread processes one dimension in moe_intermediate_size
+    // each iteration processes one "moe intermediate dim chunk"
     for (int j = threadIdx.x; j < moe_intermediate_size; j += blockDim.x) { 
         float gate_sum = 0.0f;
         float up_sum = 0.0f;
@@ -184,21 +186,53 @@ __global__ void moe_expert_gated_proj_kernel(
     }
 }
 
-__global__ void expert_down_proj_kernel(
-    floatX* gated_input, // (tokens, 768)
-    floatX* down_weights, // (expert_id, 768, 2048)
-    floatX* down_output, // (tokens, 2048)
-    int* expert_ids, // (tokens,)
-    int num_tokens
-);
+__global__ void moe_expert_down_proj_kernel(
+    floatX* gated_input, // (bs * seq_len, num_experts_per_tok, moe_intermediate_size)
+    floatX* down_proj_weights, // (num_experts, moe_intermediate_size, hidden_size)
+    floatX* down_output, // (num_tokens, num_experts_per_tok, hidden_size)
+    int* token_expert_pairs, // (num_token * num_experts_per_tok, 2)
+    int num_pairs,
+    int moe_intermediate_size,
+    int hidden_size,
+    int num_experts_per_tok
+) {
+    int pair_idx = blockIdx.x;
+    if (pair_idx >= num_pairs) return;
+
+    int token_idx = token_expert_pairs[pair_idx * 2];
+    int expert_idx = token_expert_pairs[pair_idx * 2 + 1];
+    int local_expert_idx = pair_idx % num_experts_per_tok;
+
+    // for each token-expert pair, transform (moe_intermediate_size,) -> (hidden_size,)
+    for (int j = threadIdx.x; j < hidden_size; j += blockDim.x) {
+        float sum = 0.0f;
+
+        for (int i = 0; i < moe_intermediate_size; i++) { 
+            // input_idx is [token_idx, local_expert_idx, i])
+            int input_idx = token_idx * num_experts_per_tok * moe_intermediate_size + local_expert_idx * moe_intermediate_size + i;
+            float input_val = (float)gated_input[input_idx];
+
+            int weight_idx = expert_idx * moe_intermediate_size * hidden_size + i * hidden_size + j;
+            sum += input_val * (float)down_proj_weights[weight_idx];
+        }
+        // out_idx is (token_idx, local_expert_idx, j)
+        int out_idx = token_idx * num_experts_per_tok * hidden_size + local_expert_idx * hidden_size + j;
+        down_output[out_idx] = (floatX)sum;
+    }
+}
 
 __global__ void moe_aggregate_kernel(
-    floatX* expert_outputs, // (batch_size, seq_len, 8, 2048)
-    floatX* routing_weights, // (batch_size, seq_len, 8)
-    floatX* final_output, // (batch_size, seq_len, 2048)
-    int batch_size,
-    int seq_len
-);
+    floatX* down_output, // (bs * seq_len, num_experts_per_tok, hidden_size)
+    floatX* routing_weights, // (bs * seq_len, num_experts_per_tok)
+    floatX* final_output, // (bs * seq_len, hidden_size)
+    int num_tokens,
+    int num_experts_per_tok,
+    int hidden_size
+) {
+    int token_idx = blockIdx.x;
+    int element_idx = threadIdx.x;
+    // TODO: finish this
+}
 
 void moe_forward(
     Qwen3Config* config,
