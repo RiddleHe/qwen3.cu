@@ -140,28 +140,49 @@ __global__ void moe_router_kernel(
     int seq_len
 );
 
-__global__ void expert_gate_proj_kernel(
-    floatX* input, // (tokens, 2048)
-    floatX* gate_weights, // (expert_id, 2048, 768)
-    floatX* gate_output, // (tokens, 768)
-    int* expert_ids, // (tokens,)
-    int num_tokens
-);
+__global__ void moe_expert_gated_proj_kernel(
+    floatX* input, // (bs * seq_len, hidden_size)
+    floatX* gate_proj_weights, // (num_experts, hidden_size, moe_intermediate_size)
+    floatX* up_proj_weights, // (num_experts, hidden_size, moe_intermediate_size)
+    floatX* gated_output, // (bs * seq_len, num_experts_per_tok, moe_intermediate_size)
+    int* token_expert_pairs, // (bs * seq_len * num_experts_per_tok, 2) // token_idx, expert_idx
+    int num_pairs,
+    int hidden_size,
+    int moe_intermediate_size,
+    int num_experts_per_tok
+) {
+    int pair_idx = blockIdx.x; // each block processes one token-expert pair
+    if (pair_idx >= num_pairs) return;
 
-__global__ void expert_up_proj_kernel(
-    floatX* input, // (tokens, 2048)
-    floatX* up_weights, // (expert_id, 2048, 768)
-    floatX* up_output, // (tokens, 768)
-    int* expert_ids, // (tokens,)
-    int num_tokens
-);
+    int token_idx = token_expert_pairs[pair_idx * 2];
+    int expert_idx = token_expert_pairs[pair_idx * 2 + 1]; // global expert idx for this pair (0-127)
+    int local_expert_idx = pair_idx % num_experts_per_tok; // local expert idx for this pair (0-7)
 
-__global__ void silu_gate_kernel(
-    floatX* gate_output, // all three are (tokens, 768)
-    floatX* up_output,
-    floatX* gated_output,
-    int num_tokens
-);
+    // for each token-expert pair, transform (hidden_size,) -> (moe_intermediate_size,)
+    for (int j = threadIdx.x; j < moe_intermediate_size; j += blockDim.x) { 
+        float gate_sum = 0.0f;
+        float up_sum = 0.0f;
+
+        for (int i = 0; i < hidden_size; i++) {  // for each token-expert pair, calculate a single dim in moe_intermediate_size
+            // input_idx is (token_idx, i) in (num_toknens, hidden_size)
+            float input_val = (float)input[token_idx * hidden_size + i];
+
+            // gate idx is [expert_idx, i, j] in (num_experts, hidden_size, moe_intermediate_size)
+            int gate_idx = expert_idx * hidden_size * moe_intermediate_size + i * moe_intermediate_size + j;
+            gate_sum += input_val * (float)gate_proj_weights[gate_idx];
+
+            // up_idx is also [expert_idx, i, j] in (num_experts, hidden_size, moe_intermediate_size)
+            int up_idx = expert_idx * hidden_size * moe_intermediate_size + i * moe_intermediate_size + j;
+            up_sum += input_val * (float)up_proj_weights[up_idx];
+        }
+
+        float gated = silu_activation(gate_sum) * up_sum; // gate + up
+
+        // out_idx is (token_idx, local_expert_idx, j) in (num_tokens, num_experts_per_tok, moe_intermediate_size)
+        int out_idx = token_idx * num_experts_per_tok * moe_intermediate_size + local_expert_idx * moe_intermediate_size + j;
+        gated_output[out_idx] = (floatX)gated;
+    }
+}
 
 __global__ void expert_down_proj_kernel(
     floatX* gated_input, // (tokens, 768)
