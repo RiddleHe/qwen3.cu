@@ -132,14 +132,6 @@ __global__ void moe_router_softmax_topk_kernel(
 
 }
 
-__global__ void moe_router_kernel(
-    floatX* router_logits, // (batch_size, seq_len, 128)
-    int* selected_experts, // (batch_size, seq_len, 8)
-    floatX* routing_weights, // (batch_size, seq_len, 8)
-    int batch_size,
-    int seq_len
-);
-
 __global__ void moe_expert_gated_proj_kernel(
     floatX* input, // (bs * seq_len, hidden_size)
     floatX* gate_proj_weights, // (num_experts, hidden_size, moe_intermediate_size)
@@ -230,6 +222,7 @@ __global__ void moe_aggregate_kernel(
     int hidden_size
 ) {
     int token_idx = blockIdx.x; // each block processes one token
+    // TODO: verify that thread size is larger than hidden_size, if not use chunking
     int element_idx = threadIdx.x; // each thread processes one dim in hidden_size for this token
     
     if (token_idx >= num_tokens || element_idx >= hidden_size) return;
@@ -246,12 +239,63 @@ __global__ void moe_aggregate_kernel(
 
 void moe_forward(
     Qwen3Config* config,
-    floatX* input, // (batch_size, seq_len, 2048)
+    floatX* input, // (batch_size * seq_len, hidden_size)
     floatX* router_weights, // (2048, 128)
     ExpertWeights* experts, // (128, expert weight arrays)
     floatX* output, // (batch_size, seq_len, 2048)
-    int batch_size,
-    int seq_len
-);
+    floatX* workspace,
+    cudaStream_t stream
+) {
+    int num_tokens = config->batch_size * config->seq_len;
+    int hidden_size = config->hidden_size;
+    int num_experts = config->num_experts;
+    int num_experts_per_tok = config->num_experts_per_tok;
+    int moe_intermediate_size = config->moe_intermediate_size;
+
+    // Pre-allocate GPU memory for intermediate tensors
+    // TODO: understand where the weight loading can go
+    floatX* router_logits = workspace;
+    int* selected_experts = (int*)(router_logits + num_tokens * num_experts); // add the shape of previous token to point to next token
+    floatX* routing_weights_out = (floatX*)(selected_experts + num_tokens * num_experts_per_tok);
+    intX* token_expert_pairs = (intX*)(routing_weights_out + num_tokens * num_experts_per_tok);
+    floatX* gated_outputs = (floatX*)(token_expert_pairs + num_tokens * num_experts_per_tok * 2);
+    floatX* expert_outputs = gated_outputs + num_tokens * num_experts_per_tok * moe_intermediate_size; // now point to expert outputs
+
+    // Compute router logits
+    // TODO: is there a specific reason for using cublas here and nowhere else?
+    cublasHandle_t handle = cublas_handle;
+    float alpha = 1.0f, beta = 0.0f;
+    cublasGemmEx(
+        handle,
+        CUBLAS_OP_T, CUBLAS_OP_N,
+        num_experts, num_tokens, hidden_size,
+        &alpha,
+        router_weights, CUBLAS_LOWP, hidden_size,
+        input, CUBLAS_LOWP, hidden_size,
+        &beta,
+        router_logits, CUBLAS_LOWP, num_experts,
+        CUBLAS_COMPUTE_32F,
+        CUBLAS_GEMM_DEFAULT
+    );
+
+    // Softmax and topK
+    // TODO: is there a specific reason for using 256 here regardless of GPU hardware?
+    int threads = 256;
+    // TODO: understand this
+    int shared_size = (num_experts * sizeof((float) + num_experts * sizeof(int) + 2 * sizeof(float)));
+    moe_router_softmax_topk_kernel<<<num_tokens, threads, shared_size, stream>>>(
+        router_logits, selected_experts, routing_weights_out,
+        num_tokens, num_experts, num_experts_per_tok
+    );
+
+    // Create token-expert pairs
+    // TODO: do it on GPU only
+
+    // Expert forward pass
+
+    // Aggregate
+
+
+}
 
 #endif
