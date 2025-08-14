@@ -229,9 +229,19 @@ __global__ void moe_aggregate_kernel(
     int num_experts_per_tok,
     int hidden_size
 ) {
-    int token_idx = blockIdx.x;
-    int element_idx = threadIdx.x;
-    // TODO: finish this
+    int token_idx = blockIdx.x; // each block processes one token
+    int element_idx = threadIdx.x; // each thread processes one dim in hidden_size for this token
+    
+    if (token_idx >= num_tokens || element_idx >= hidden_size) return;
+
+    float sum = 0.0f;
+    for (int e = 0; e < num_experts_per_tok; e++) { // iterate over all experts for this token
+        float weight = (float)routing_weights[token_idx * num_experts_per_tok + e];
+        // expert_idx is (token_idx, e, element_idx)
+        int expert_idx = token_idx * num_experts_per_tok * hidden_size + e * hidden_size + element_idx;
+        sum += (float)down_output[expert_idx] * weight;
+    }
+    final_output[token_idx * hidden_size + element_idx] = (floatX)sum;
 }
 
 void moe_forward(
